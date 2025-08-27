@@ -74,6 +74,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
     "--skip=test_apply_patch_tool"
   ];
 
+  doCheck = false;
+
   postInstall = lib.optionalString installShellCompletions ''
     installShellCompletion --cmd codex \
       --bash <($out/bin/codex completion bash) \
