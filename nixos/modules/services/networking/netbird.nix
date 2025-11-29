@@ -277,6 +277,24 @@ in
                 '';
               };
 
+              allowServerSSH = mkOption {
+                type = bool;
+                default = false;
+                description = ''
+                  Allow SSH access to this machine from other NetBird peers.
+                  Equivalent to `--allow-server-ssh` flag.
+                '';
+              };
+
+              enableSSHRoot = mkOption {
+                type = bool;
+                default = false;
+                description = ''
+                  Enable SSH root access from other NetBird peers.
+                  Equivalent to `--enable-ssh-root` flag.
+                '';
+              };
+
               wrapper = mkOption {
                 type = package;
                 internal = true;
@@ -298,8 +316,14 @@ in
                     buildCommand = concatStringsSep "\n" [
                       ''
                         mkdir -p "$out/bin"
-                        makeWrapper ${lib.getExe cfg.package} "$out/bin/${mkBin "netbird"}" \
-                          ${escapeShellArgs makeWrapperArgs}
+                        cat > "$out/bin/${mkBin "netbird"}" <<EOF
+                        #!${pkgs.runtimeShell}
+                        exec ${lib.getExe cfg.package} --daemon-addr "unix://${client.dir.runtime}/sock" \
+                          ${optionalString client.allowServerSSH "--allow-server-ssh"} \
+                          ${optionalString client.enableSSHRoot "--enable-ssh-root"} \
+                          "\$@"
+                        EOF
+                        chmod +x "$out/bin/${mkBin "netbird"}"
                       ''
                       (optionalString cfg.ui.enable ''
                         # netbird-ui doesn't support envvars
@@ -373,6 +397,15 @@ in
                 default = "/var/run/${client.dir.baseName}";
                 description = ''
                   A runtime directory used by NetBird client.
+                '';
+              };
+              dir.stateMode = mkOption {
+                type = str;
+                default = "0755";
+                description = ''
+                  Permissions for the state directory. Default allows owner and group access.
+                  Use "0700" for owner-only access (more secure), "0750" for group read access,
+                  or "0755" for group read/write access.
                 '';
               };
               service.name = mkOption {
@@ -559,7 +592,7 @@ in
             RuntimeDirectoryMode = mkDefault "0755";
             ConfigurationDirectory = client.dir.baseName;
             StateDirectory = client.dir.baseName;
-            StateDirectoryMode = "0700";
+            StateDirectoryMode = client.dir.stateMode;
 
             WorkingDirectory = client.dir.state;
           };
@@ -668,7 +701,10 @@ in
 
             # merge /etc/${client.dir.baseName}/config.d' into "$NB_CONFIG"
             {
-              test -e "$NB_CONFIG" || echo -n '{}' > "$NB_CONFIG"
+              if ! test -e "$NB_CONFIG"; then
+                echo -n '{}' > "$NB_CONFIG"
+                chmod 664 "$NB_CONFIG"
+              fi
 
               # merge config.d with "$NB_CONFIG" into "$NB_CONFIG.new"
               jq -sS 'reduce .[] as $i ({}; . * $i)' \
@@ -680,6 +716,7 @@ in
               if ! diff <(jq -S <"$NB_CONFIG") "$NB_CONFIG.new" ; then
                 echo "Updating $NB_CONFIG ..."
                 mv "$NB_CONFIG.new" "$NB_CONFIG"
+                chmod 664 "$NB_CONFIG"
               else
                 echo "Files are the same, not doing anything."
                 rm "$NB_CONFIG.new"
